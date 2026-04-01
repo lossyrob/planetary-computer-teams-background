@@ -1,6 +1,7 @@
-Pillow==9.3.0
-pystac-client==0.4.0
-shapely==1.8.2
-pyyaml==6.0
-pydantic==1.9.1
-dateparser==1.1.1
+Pillow>=10,<12
+pystac-client>=0.7,<1
+shapely>=2,<3
+pyyaml>=6.0.2,<7
+pydantic>=1.10,<2
+dateparser>=1.2,<2
+requests>=2.32,<3

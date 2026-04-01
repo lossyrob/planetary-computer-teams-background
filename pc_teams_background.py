@@ -9,6 +9,7 @@ from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
+from urllib.parse import parse_qs
 from uuid import uuid4
 
 import dateparser
@@ -22,10 +23,79 @@ from pystac_client import Client
 from shapely.geometry import box, mapping, shape
 
 AOI_LAST_ITEM_DT_KEY = "last_item_datetime"
+REQUEST_TIMEOUT_SECONDS = 30
 
 
 class SettingsError(Exception):
     pass
+
+
+def expand_path(path_str: str) -> Path:
+    return Path(os.path.expandvars(os.path.expanduser(path_str)))
+
+
+def resolve_settings_path(path_str: str, settings_dir: Path) -> str:
+    path = expand_path(path_str)
+    if path.is_absolute():
+        return str(path)
+    return str((settings_dir / path).resolve())
+
+
+def get_teams_image_folder_candidates() -> List[Path]:
+    candidates: List[Path] = []
+    local_appdata = os.environ.get("LOCALAPPDATA")
+    appdata = os.environ.get("APPDATA")
+
+    if local_appdata:
+        candidates.append(
+            Path(local_appdata)
+            / "Packages"
+            / "MSTeams_8wekyb3d8bbwe"
+            / "LocalCache"
+            / "Microsoft"
+            / "MSTeams"
+            / "Backgrounds"
+            / "Uploads"
+        )
+        candidates.append(
+            Path(local_appdata) / "Microsoft" / "MSTeams" / "Backgrounds" / "Uploads"
+        )
+
+    if appdata:
+        candidates.append(
+            Path(appdata) / "Microsoft" / "Teams" / "Backgrounds" / "Uploads"
+        )
+
+    return candidates
+
+
+def detect_teams_image_folder() -> Path:
+    candidates = get_teams_image_folder_candidates()
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+
+    raise SettingsError(
+        "Could not find a Teams background Uploads folder. "
+        "Set teams_image_folder in settings.yaml. "
+        f"Looked in: {', '.join(str(candidate) for candidate in candidates)}"
+    )
+
+
+def parse_render_options(options: str) -> Dict[str, Union[str, List[str]]]:
+    parsed = parse_qs(options, keep_blank_values=True)
+    result: Dict[str, Union[str, List[str]]] = {}
+    for key, values in parsed.items():
+        result[key] = values[0] if len(values) == 1 else values
+    return result
+
+
+def make_feature(geometry: Dict[str, Any]) -> Dict[str, Any]:
+    return {"type": "Feature", "geometry": geometry, "properties": {}}
+
+
+def to_utc_isoformat(dt: datetime) -> str:
+    return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 class FilterConfig(BaseModel):
@@ -50,20 +120,21 @@ class AOIsConfig(BaseModel):
 
     @validator("feature_collection_path")
     def _validate_fc_path(cls, v: str) -> str:
-        if not Path(v).exists():
-            raise ValueError(f"Feature collection path {v} does not exist")
-        return v
+        path = expand_path(v)
+        if not path.exists():
+            raise ValueError(f"Feature collection path {path} does not exist")
+        return str(path)
 
 
 class APIURLConfig(BaseModel):
     stac: str
     info: str
-    image: str
+    item_crop: str = "https://planetarycomputer.microsoft.com/api/data/v1/item/crop"
 
 
 class Settings(BaseModel):
     image_name: str = "pc-teams-background.png"
-    teams_image_folder: str
+    teams_image_folder: Optional[str] = None
     collections: List[CollectionConfig]
     width: int
     height: int
@@ -75,22 +146,45 @@ class Settings(BaseModel):
     image_info_path: Optional[str] = None
     force_regen_after: Optional[str] = None
     mirror_image: bool = False
-    show_branding: bool = True
+
+    def get_image_folder(self) -> Path:
+        if self.teams_image_folder:
+            path = expand_path(self.teams_image_folder)
+            if not path.exists():
+                raise SettingsError(
+                    f"Configured Teams image folder does not exist: {path}"
+                )
+            return path
+        return detect_teams_image_folder()
+
+    def use_modern_thumbnail_name(self) -> bool:
+        image_folder = self.get_image_folder()
+        modern_thumb = next(image_folder.glob("*_thumb.*"), None)
+        legacy_thumb = next(image_folder.glob("*_thumbnail.*"), None)
+
+        if modern_thumb and not legacy_thumb:
+            return True
+        if legacy_thumb and not modern_thumb:
+            return False
+
+        return "msteams" in str(image_folder).lower()
 
     def get_image_path(self) -> Path:
-        return Path(self.teams_image_folder) / self.image_name
+        return self.get_image_folder() / self.image_name
 
     def get_thumbnail_path(self) -> Path:
-        return Path(self.teams_image_folder) / (
-            Path(self.image_name).stem + "_thumbnail.jpg"
-        )
+        image_path = self.get_image_path()
+        if self.use_modern_thumbnail_name():
+            return image_path.with_name(f"{image_path.stem}_thumb{image_path.suffix}")
+
+        return image_path.with_name(f"{image_path.stem}_thumbnail.jpg")
 
     def get_image_info_path(self) -> Path:
         if self.image_info_path:
-            return Path(self.image_info_path)
-        else:
-            p = Path(self.teams_image_folder)
-            return p.joinpath(f"{Path(self.image_name).stem}-info.json")
+            return expand_path(self.image_info_path)
+
+        image_folder = self.get_image_folder()
+        return image_folder.joinpath(f"{Path(self.image_name).stem}-info.json")
 
     def get_force_regen_after_time(self, created_at: datetime) -> Optional[datetime]:
         if self.force_regen_after is None:
@@ -116,14 +210,31 @@ class Settings(BaseModel):
 
     @classmethod
     def from_yaml(cls, yaml_path: Union[str, Path]) -> "Settings":
+        yaml_path = Path(yaml_path)
         with open(yaml_path) as f:
-            settings = yaml.safe_load(f)
+            settings = yaml.safe_load(f) or {}
+
+        settings_dir = yaml_path.parent.resolve()
+        if settings.get("teams_image_folder"):
+            settings["teams_image_folder"] = resolve_settings_path(
+                settings["teams_image_folder"], settings_dir
+            )
+        if settings.get("image_info_path"):
+            settings["image_info_path"] = resolve_settings_path(
+                settings["image_info_path"], settings_dir
+            )
+        aois = settings.get("aois")
+        if aois and aois.get("feature_collection_path"):
+            aois["feature_collection_path"] = resolve_settings_path(
+                aois["feature_collection_path"], settings_dir
+            )
+
         return cls(**settings)
 
     @classmethod
     def load(cls) -> "Settings":
         if os.environ.get("PC_TEAMS_BG_SETTINGS_FILE"):
-            path = Path(os.environ["PC_TEAMS_BG_SETTINGS_FILE"])
+            path = expand_path(os.environ["PC_TEAMS_BG_SETTINGS_FILE"])
         else:
             HERE = Path(__file__).parent
             path = HERE / "settings.yaml"
@@ -133,7 +244,7 @@ class Settings(BaseModel):
 class ImageInfo(BaseModel):
     target_item: Dict[str, Any]
     cql: Dict[str, Any]
-    render_params: str
+    render_params: Dict[str, Any]
     is_aoi: bool
     last_changed: Optional[datetime] = None
 
@@ -159,7 +270,7 @@ def cql_add_after_arg(cql: Dict[str, Any], after: str) -> Dict[str, Any]:
             "op": "anyinteracts",
             "args": [
                 {"property": "datetime"},
-                {"interval": [after, datetime.utcnow().isoformat()]},
+                {"interval": [after, to_utc_isoformat(datetime.now(timezone.utc))]},
             ],
         }
     )
@@ -175,6 +286,7 @@ def ensure_ids(fc_path: Path) -> None:
         feature_collection = json.load(f)
     write = False
     for feature in feature_collection["features"]:
+        feature.setdefault("properties", {})
         if "id" not in feature:
             write = True
             feature["id"] = str(uuid4())
@@ -267,21 +379,65 @@ class TeamsBackgroundGenerator:
 
     def get_render_params(
         self, collection_id: str, render_options_name: Optional[str] = None
-    ) -> str:
-        resp = requests.get(f"{self.settings.apis.info}?collection={collection_id}")
-        mosaic_info = resp.json()
-        if render_options_name:
-            for render_options in mosaic_info["render_options"]:
-                if render_options["name"] == render_options_name:
-                    return render_options["options"]
-        return mosaic_info["renderOptions"][0]["options"]
-
-    def fetch_image(self, request_data: Dict[str, Any]) -> PILImage:
-        resp = requests.post(self.settings.apis.image, json=request_data)
+    ) -> Dict[str, Union[str, List[str]]]:
+        resp = requests.get(
+            self.settings.apis.info,
+            params={"collection": collection_id},
+            timeout=REQUEST_TIMEOUT_SECONDS,
+        )
         resp.raise_for_status()
-        resp_json = resp.json()
-        bytes = requests.get(resp_json["url"]).content
-        return Image.open(io.BytesIO(bytes))
+        mosaic_info = resp.json()
+        render_options = mosaic_info.get("renderOptions") or []
+        if not render_options:
+            raise SettingsError(
+                f"No render options found for collection {collection_id}."
+            )
+
+        selected_option = render_options[0]
+        if render_options_name:
+            selected_option = next(
+                (
+                    option
+                    for option in render_options
+                    if option["name"] == render_options_name
+                ),
+                None,
+            )
+            if selected_option is None:
+                available_options = ", ".join(
+                    option["name"] for option in render_options
+                )
+                raise SettingsError(
+                    f"Render option '{render_options_name}' was not found for "
+                    f"{collection_id}. Available options: {available_options}"
+                )
+
+        return parse_render_options(selected_option["options"])
+
+    def fetch_image(
+        self,
+        item: pystac.Item,
+        geometry: Dict[str, Any],
+        render_params: Dict[str, Union[str, List[str]]],
+    ) -> PILImage:
+        collection_id = item.collection_id
+        if not collection_id:
+            raise ValueError(f"Item {item.id} has no collection_id")
+
+        item_crop_url = self.settings.apis.item_crop.rstrip("/")
+        resp = requests.post(
+            f"{item_crop_url}/{self.settings.width}x{self.settings.height}.png",
+            params={
+                "collection": collection_id,
+                "item": item.id,
+                **render_params,
+            },
+            json=make_feature(geometry),
+            timeout=REQUEST_TIMEOUT_SECONDS,
+        )
+        resp.raise_for_status()
+        with Image.open(io.BytesIO(resp.content)) as image:
+            return image.copy()
 
     def get_target_items(self) -> List[pystac.Item]:
         client = Client.open(self.settings.apis.stac)
@@ -290,9 +446,10 @@ class TeamsBackgroundGenerator:
 
         for collection_config in self.settings.collections:
             collection_id = collection_config.id
-            search_after = (
-                datetime.utcnow() - timedelta(days=collection_config.search_days)
-            ).isoformat()
+            search_after = to_utc_isoformat(
+                datetime.now(timezone.utc)
+                - timedelta(days=collection_config.search_days)
+            )
 
             base_cql = self.get_base_cql(collection_id, collection_config.filters)
 
@@ -302,6 +459,7 @@ class TeamsBackgroundGenerator:
                 print("Finding items that intersect AOIs...")
                 features = json.loads(fc_path.read_text())["features"]
                 for feature in features:
+                    properties = feature.setdefault("properties", {})
                     aoi_id = feature["id"]
                     aoi_cql = cql_add_geom_arg(base_cql, feature["geometry"])
                     aoi_cql = cql_add_after_arg(aoi_cql, search_after)
@@ -316,9 +474,9 @@ class TeamsBackgroundGenerator:
                         # Check if the item was already used.
                         this_dt = get_datetime(aoi_item)
                         last_dt: Optional[datetime] = None
-                        if AOI_LAST_ITEM_DT_KEY in feature["properties"]:
+                        if AOI_LAST_ITEM_DT_KEY in properties:
                             last_dt = datetime.fromisoformat(
-                                feature["properties"].get(AOI_LAST_ITEM_DT_KEY)
+                                properties.get(AOI_LAST_ITEM_DT_KEY)
                             )
                         if not last_dt or this_dt > last_dt:
                             print(f"Found new item that intersects AOI {aoi_id}...")
@@ -328,10 +486,12 @@ class TeamsBackgroundGenerator:
 
             if not target_aoi_items:
                 print("Finding random items...")
-                items = client.search(
-                    filter=cql_add_after_arg(base_cql, search_after),
-                    max_items=self.settings.max_search_results,
-                ).get_all_items()
+                items = list(
+                    client.search(
+                        filter=cql_add_after_arg(base_cql, search_after),
+                        max_items=self.settings.max_search_results,
+                    ).items()
+                )
 
                 if not items:
                     print(f"WARNING: No items found. Skipping {collection_id}.")
@@ -354,7 +514,8 @@ class TeamsBackgroundGenerator:
                 feature_collection = json.load(f)
             for feature in feature_collection["features"]:
                 if feature["id"] == aoi_id:
-                    feature["properties"][AOI_LAST_ITEM_DT_KEY] = item_dt.isoformat()
+                    properties = feature.setdefault("properties", {})
+                    properties[AOI_LAST_ITEM_DT_KEY] = item_dt.isoformat()
             with open(fc_path, "w") as f:
                 json.dump(feature_collection, f, indent=2)
 
@@ -366,17 +527,14 @@ class TeamsBackgroundGenerator:
                 print("No need to generate new background")
                 return False
 
-        fc_path: Optional[Path] = None
         if self.settings.aois:
-            fc_path = Path(self.settings.aois.feature_collection_path)
-            ensure_ids(fc_path)
+            ensure_ids(Path(self.settings.aois.feature_collection_path))
 
-        image_info: Optional[ImageInfo] = None
-        image_info_path = self.settings.get_image_info_path()
-        if image_info_path.exists():
-            image_info = ImageInfo.parse_file(image_info_path)
+        target_items = self.get_target_items()
+        if not target_items:
+            raise Exception("ERROR: No target items found for the configured search.")
 
-        target_item = random.choice(self.get_target_items())
+        target_item = random.choice(target_items)
         is_aoi = False
         if target_item.properties.get("aoi"):
             is_aoi = True
@@ -386,9 +544,6 @@ class TeamsBackgroundGenerator:
             if not target_item.geometry:
                 raise Exception(f"Item {target_item.id} has no geometry")
             target_geom = target_item.geometry
-
-        if not target_item:
-            raise Exception("ERROR: No target item found!")
 
         collection_id = target_item.collection_id
         assert collection_id
@@ -400,22 +555,12 @@ class TeamsBackgroundGenerator:
         bg_geom = self.get_bg_geom(target_geom)
         render_params = self.get_render_params(collection_id, render_options)
         cql = self.get_base_cql(collection_id, collection_config.filters)
-
-        request_data: Dict[str, Any] = {
-            "cql": cql,
-            "geometry": bg_geom,
-            "showBranding": self.settings.show_branding,
-            "render_params": render_params + f"&collection={collection_id}",
-            "cols": self.settings.width,
-            "rows": self.settings.height,
-        }
-
-        image = self.fetch_image(request_data)
+        image = self.fetch_image(target_item, bg_geom, render_params)
         bg_image = image
         if self.settings.mirror_image:
             bg_image = ImageOps.mirror(bg_image)
         bg_image.convert("RGB").save(self.settings.get_image_path())
-        thumbnail = image.resize(
+        thumbnail = bg_image.resize(
             (self.settings.thumbnail_width, self.settings.thumbnail_height)
         )
         thumbnail.convert("RGB").save(self.settings.get_thumbnail_path())
@@ -434,18 +579,38 @@ class TeamsBackgroundGenerator:
         return True
 
 
-if __name__ == "__main__":
+def run(force: bool = False, settings_file: Optional[Union[str, Path]] = None) -> bool:
+    if settings_file is not None:
+        settings = Settings.from_yaml(settings_file)
+    else:
+        settings = Settings.load()
+    generator = TeamsBackgroundGenerator(settings, force)
+    return generator.generate()
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
     arg_parser = argparse.ArgumentParser()
     arg_parser.add_argument("-f", "--force", action="store_true")
     arg_parser.add_argument("-d", "--debug", action="store_true")
+    arg_parser.add_argument(
+        "--settings-file",
+        help="Optional path to a settings YAML file. Defaults to settings.yaml.",
+    )
+    return arg_parser
 
-    args = arg_parser.parse_args()
-    settings = Settings.load()
-    generator = TeamsBackgroundGenerator(settings, args.force)
+
+def main(argv: Optional[List[str]] = None) -> int:
+    args = build_arg_parser().parse_args(argv)
+
     try:
-        generator.generate()
+        run(force=args.force, settings_file=args.settings_file)
     except Exception as e:
         if args.debug:
             raise
         print(f"ERROR: {e}")
-        sys.exit(1)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,9 +1,13 @@
-# The image name for the generated background
-image_name: pc-teams-background.jpg
+# The image name for the generated background.
+# PNG matches the current Teams background files on Windows.
+image_name: pc-teams-background.png
 
 # The folder Teams uses for background images.
-# Normally this is to /mnt/c/Users/${USER}/AppData/Roaming/Microsoft/Teams/Backgrounds/Uploads
-# on a WLS 2 system, where the ${USER} is the windows user name.
+# Leave blank to auto-detect the current Windows Teams folder.
+# The script checks these paths in order:
+#   %LOCALAPPDATA%\Packages\MSTeams_8wekyb3d8bbwe\LocalCache\Microsoft\MSTeams\Backgrounds\Uploads
+#   %LOCALAPPDATA%\Microsoft\MSTeams\Backgrounds\Uploads
+#   %APPDATA%\Microsoft\Teams\Backgrounds\Uploads
 teams_image_folder:
 
 # AOIs defines areas you want to highlight. The background generation
@@ -55,7 +59,7 @@ image_info_path:
 apis:
   stac: https://planetarycomputer.microsoft.com/api/stac/v1/
   info: https://planetarycomputer.microsoft.com/api/data/v1/mosaic/info
-  image: https://planetarycomputer.microsoft.com/api/f/v1/image
+  item_crop: https://planetarycomputer.microsoft.com/api/data/v1/item/crop
 
 # Maximum search results to pull from the STAC API
 max_search_results: 1000
@@ -69,6 +73,3 @@ max_search_results: 1000
 # waiting for the access time to show a system read.
 force_regen_after: 1 day
 
-# Controls whether the Microsoft logo will
-# be placed on the image
-show_branding: true
