@@ -25,6 +25,8 @@ from shapely.geometry import box, mapping, shape
 AOI_LAST_ITEM_DT_KEY = "last_item_datetime"
 REQUEST_TIMEOUT_SECONDS = 30
 MIN_AOI_ITEM_COVERAGE_RATIO = 0.6
+FOOTPRINT_FIT_GRID_SIZE = 61
+FOOTPRINT_FIT_SCALE_STEPS = 10
 
 
 class SettingsError(Exception):
@@ -97,6 +99,13 @@ def make_feature(geometry: Dict[str, Any]) -> Dict[str, Any]:
 
 def to_utc_isoformat(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def linspace(start: float, stop: float, steps: int) -> List[float]:
+    if steps <= 1:
+        return [start]
+    step_size = (stop - start) / (steps - 1)
+    return [start + (step_size * idx) for idx in range(steps)]
 
 
 class FilterConfig(BaseModel):
@@ -369,14 +378,125 @@ class TeamsBackgroundGenerator:
         bounds: List[float] = list(envelope.bounds)
         width: float = bounds[2] - bounds[0]
         height: float = bounds[3] - bounds[1]
-        new_height: float = width * (self.settings.height / self.settings.width)
-        height_diff: float = new_height - height
-        xmin: float = bounds[0]
-        xmax: float = bounds[2]
-        ymin: float = bounds[1] - (height_diff / 2)
-        ymax: float = bounds[3] + (height_diff / 2)
+        if width <= 0 or height <= 0:
+            raise ValueError("Target geometry envelope must have a non-zero area")
 
-        return mapping(box(xmin, ymin, xmax, ymax))
+        target_aspect = self.settings.width / self.settings.height
+        envelope_aspect = width / height
+        if envelope_aspect >= target_aspect:
+            rect_width = width
+            rect_height = width / target_aspect
+        else:
+            rect_width = height * target_aspect
+            rect_height = height
+
+        center_x = (bounds[0] + bounds[2]) / 2
+        center_y = (bounds[1] + bounds[3]) / 2
+        return mapping(
+            box(
+                center_x - (rect_width / 2),
+                center_y - (rect_height / 2),
+                center_x + (rect_width / 2),
+                center_y + (rect_height / 2),
+            )
+        )
+
+    def find_rect_within_item_footprint(
+        self,
+        item_shape,
+        desired_rect,
+    ):
+        center = desired_rect.centroid
+        minx, miny, maxx, maxy = item_shape.bounds
+        rect_minx, rect_miny, rect_maxx, rect_maxy = desired_rect.bounds
+        rect_width = rect_maxx - rect_minx
+        rect_height = rect_maxy - rect_miny
+
+        min_center_x = minx + (rect_width / 2)
+        max_center_x = maxx - (rect_width / 2)
+        min_center_y = miny + (rect_height / 2)
+        max_center_y = maxy - (rect_height / 2)
+        if min_center_x > max_center_x or min_center_y > max_center_y:
+            return None
+
+        center_x_values = linspace(min_center_x, max_center_x, FOOTPRINT_FIT_GRID_SIZE)
+        center_y_values = linspace(min_center_y, max_center_y, FOOTPRINT_FIT_GRID_SIZE)
+        center_x_values.append(min(max(center.x, min_center_x), max_center_x))
+        center_y_values.append(min(max(center.y, min_center_y), max_center_y))
+
+        candidates = {
+            (round(candidate_x, 10), round(candidate_y, 10))
+            for candidate_x in center_x_values
+            for candidate_y in center_y_values
+        }
+
+        ranked_candidates = sorted(
+            candidates,
+            key=lambda candidate: (
+                (candidate[0] - center.x) ** 2 + (candidate[1] - center.y) ** 2
+            ),
+        )
+        for candidate_x, candidate_y in ranked_candidates:
+            candidate_rect = box(
+                candidate_x - (rect_width / 2),
+                candidate_y - (rect_height / 2),
+                candidate_x + (rect_width / 2),
+                candidate_y + (rect_height / 2),
+            )
+            if item_shape.covers(candidate_rect):
+                return candidate_rect
+
+        return None
+
+    def fit_bg_geom_to_item_footprint(
+        self, base_geom: Dict[str, Any], item_geom: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        desired_rect = shape(self.get_bg_geom(base_geom))
+        item_shape = shape(item_geom)
+        if item_shape.covers(desired_rect):
+            return mapping(desired_rect)
+
+        moved_rect = self.find_rect_within_item_footprint(item_shape, desired_rect)
+        if moved_rect is not None:
+            print("Moved crop window inside the item footprint.")
+            return mapping(moved_rect)
+
+        rect_minx, rect_miny, rect_maxx, rect_maxy = desired_rect.bounds
+        rect_width = rect_maxx - rect_minx
+        rect_height = rect_maxy - rect_miny
+
+        best_rect = None
+        low = 0.0
+        high = 1.0
+        for _ in range(FOOTPRINT_FIT_SCALE_STEPS):
+            scale = (low + high) / 2
+            candidate_rect = box(
+                desired_rect.centroid.x - ((rect_width * scale) / 2),
+                desired_rect.centroid.y - ((rect_height * scale) / 2),
+                desired_rect.centroid.x + ((rect_width * scale) / 2),
+                desired_rect.centroid.y + ((rect_height * scale) / 2),
+            )
+            fitted_rect = self.find_rect_within_item_footprint(
+                item_shape, candidate_rect
+            )
+            if fitted_rect is not None:
+                low = scale
+                best_rect = fitted_rect
+            else:
+                high = scale
+
+        if best_rect is not None:
+            print(
+                "Shrank crop window to fit within the item footprint "
+                f"({low:.1%} of the original crop size)."
+            )
+            return mapping(best_rect)
+
+        print(
+            "Could not fit the desired crop window inside the item footprint. "
+            "Using the item footprint bounds."
+        )
+        return mapping(item_shape.envelope)
 
     def get_render_geom(
         self, item: pystac.Item, target_geom: Dict[str, Any], is_aoi: bool
@@ -461,6 +581,7 @@ class TeamsBackgroundGenerator:
             params={
                 "collection": collection_id,
                 "item": item.id,
+                "resampling": "bilinear",
                 **render_params,
             },
             json=make_feature(geometry),
@@ -584,7 +705,9 @@ class TeamsBackgroundGenerator:
 
         print("Generating background image...")
         render_geom = self.get_render_geom(target_item, target_geom, is_aoi)
-        bg_geom = self.get_bg_geom(render_geom)
+        if not target_item.geometry:
+            raise ValueError(f"Item {target_item.id} has no geometry")
+        bg_geom = self.fit_bg_geom_to_item_footprint(render_geom, target_item.geometry)
         render_params = self.get_render_params(collection_id, render_options)
         cql = self.get_base_cql(collection_id, collection_config.filters)
         image = self.fetch_image(target_item, bg_geom, render_params)
