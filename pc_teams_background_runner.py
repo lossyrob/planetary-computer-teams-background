@@ -2,7 +2,6 @@
 import argparse
 import io
 import logging
-import os
 import signal
 import sys
 import threading
@@ -19,13 +18,7 @@ DEFAULT_LOG_BACKUPS = 5
 
 
 def get_default_log_file() -> Path:
-    local_appdata = os.environ.get("LOCALAPPDATA")
-    if local_appdata:
-        log_dir = (
-            Path(local_appdata) / "PlanetaryComputerTeamsBackground" / "logs"
-        ).resolve()
-    else:
-        log_dir = (Path(__file__).parent / "logs").resolve()
+    log_dir = (Path(__file__).parent / "logs").resolve()
     log_dir.mkdir(parents=True, exist_ok=True)
     return log_dir / "runner.log"
 
@@ -92,11 +85,13 @@ def configure_logging(log_file: Path, log_level: str) -> logging.Logger:
     )
     file_handler.setFormatter(formatter)
 
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setFormatter(formatter)
-
     logger.addHandler(file_handler)
-    logger.addHandler(console_handler)
+
+    if sys.stdout is not None and hasattr(sys.stdout, "write"):
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setFormatter(formatter)
+        logger.addHandler(console_handler)
+
     return logger
 
 

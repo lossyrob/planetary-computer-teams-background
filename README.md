@@ -15,6 +15,8 @@ python -m pip install -r requirements.txt
 .\scripts\install-windows-task.ps1 -PythonExe .\.venv\Scripts\python.exe -SettingsFile .\settings.yaml -StartNow
 ```
 
+The installer automatically switches to `pythonw.exe` when it is available, so the scheduled task runs without opening a terminal window. Pass `-ConsoleWindow` only if you explicitly want a visible console.
+
 Manage it with:
 
 ```powershell
@@ -23,7 +25,7 @@ Start-ScheduledTask -TaskName "PlanetaryComputerTeamsBackground"
 Stop-ScheduledTask -TaskName "PlanetaryComputerTeamsBackground"
 Disable-ScheduledTask -TaskName "PlanetaryComputerTeamsBackground"
 Enable-ScheduledTask -TaskName "PlanetaryComputerTeamsBackground"
-Get-Content "$env:LOCALAPPDATA\PlanetaryComputerTeamsBackground\logs\runner.log" -Wait
+Get-Content ".\logs\runner.log" -Wait
 ```
 
 Remove it with:
@@ -133,7 +135,7 @@ Useful flags:
 By default, the runner logs to:
 
 ```text
-%LOCALAPPDATA%\PlanetaryComputerTeamsBackground\logs\runner.log
+<repo>\logs\runner.log
 ```
 
 ### Install the scheduled task
@@ -164,7 +166,7 @@ Start-ScheduledTask -TaskName "PlanetaryComputerTeamsBackground"
 Stop-ScheduledTask -TaskName "PlanetaryComputerTeamsBackground"
 Disable-ScheduledTask -TaskName "PlanetaryComputerTeamsBackground"
 Enable-ScheduledTask -TaskName "PlanetaryComputerTeamsBackground"
-Get-Content "$env:LOCALAPPDATA\PlanetaryComputerTeamsBackground\logs\runner.log" -Wait
+Get-Content ".\logs\runner.log" -Wait
 ```
 
 Remove it with:

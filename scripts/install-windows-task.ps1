@@ -6,7 +6,8 @@ param(
     [string]$SettingsFile,
     [int]$IntervalSeconds = 900,
     [string]$LogFile,
-    [switch]$StartNow
+    [switch]$StartNow,
+    [switch]$ConsoleWindow
 )
 
 Set-StrictMode -Version Latest
@@ -22,20 +23,50 @@ if (-not (Test-Path $RunnerScript)) {
     throw "Runner script not found: $RunnerScript"
 }
 
+function Resolve-PythonBackgroundExe {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PythonPath,
+        [switch]$ConsoleWindow
+    )
+
+    $resolvedPython = (Resolve-Path $PythonPath).Path
+    if ($ConsoleWindow) {
+        return $resolvedPython
+    }
+
+    $pythonwCandidate = Join-Path (Split-Path -Parent $resolvedPython) "pythonw.exe"
+    if (Test-Path $pythonwCandidate) {
+        return (Resolve-Path $pythonwCandidate).Path
+    }
+
+    return $resolvedPython
+}
+
 if (-not $PythonExe) {
+    $venvPythonw = Join-Path $RepoRoot ".venv\Scripts\pythonw.exe"
     $venvPython = Join-Path $RepoRoot ".venv\Scripts\python.exe"
-    if (Test-Path $venvPython) {
-        $PythonExe = $venvPython
+    if (-not $ConsoleWindow -and (Test-Path $venvPythonw)) {
+        $PythonExe = $venvPythonw
+    }
+    elseif (Test-Path $venvPython) {
+        $PythonExe = Resolve-PythonBackgroundExe -PythonPath $venvPython -ConsoleWindow:$ConsoleWindow
     }
     else {
-        $pythonCommand = Get-Command python -ErrorAction SilentlyContinue
+        $pythonCommandName = if ($ConsoleWindow) { "python" } else { "pythonw" }
+        $pythonCommand = Get-Command $pythonCommandName -ErrorAction SilentlyContinue
+        if (-not $pythonCommand -and -not $ConsoleWindow) {
+            $pythonCommand = Get-Command python -ErrorAction SilentlyContinue
+        }
         if (-not $pythonCommand) {
             throw "Could not find python.exe. Pass -PythonExe explicitly."
         }
-        $PythonExe = $pythonCommand.Source
+        $PythonExe = Resolve-PythonBackgroundExe -PythonPath $pythonCommand.Source -ConsoleWindow:$ConsoleWindow
     }
 }
-$PythonExe = (Resolve-Path $PythonExe).Path
+else {
+    $PythonExe = Resolve-PythonBackgroundExe -PythonPath $PythonExe -ConsoleWindow:$ConsoleWindow
+}
 
 if (-not $SettingsFile) {
     $defaultSettings = Join-Path $RepoRoot "settings.yaml"
@@ -47,7 +78,7 @@ if (-not $SettingsFile) {
 $SettingsFile = (Resolve-Path $SettingsFile).Path
 
 if (-not $LogFile) {
-    $logDirectory = Join-Path $env:LOCALAPPDATA "PlanetaryComputerTeamsBackground\logs"
+    $logDirectory = Join-Path $RepoRoot "logs"
     New-Item -ItemType Directory -Force -Path $logDirectory | Out-Null
     $LogFile = Join-Path $logDirectory "runner.log"
 }
@@ -91,6 +122,8 @@ if ($PSCmdlet.ShouldProcess($TaskName, "Register scheduled task")) {
         -Force | Out-Null
 
     if ($StartNow) {
+        Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 1
         Start-ScheduledTask -TaskName $TaskName
     }
 }
@@ -100,6 +133,9 @@ Write-Host "Python    : $PythonExe"
 Write-Host "Runner    : $RunnerScript"
 Write-Host "Settings  : $SettingsFile"
 Write-Host "Log file  : $LogFile"
+if (-not $ConsoleWindow) {
+    Write-Host "Window    : hidden (pythonw.exe when available)"
+}
 Write-Host "Manage with:"
 Write-Host "  Start-ScheduledTask -TaskName `"$TaskName`""
 Write-Host "  Stop-ScheduledTask -TaskName `"$TaskName`""
