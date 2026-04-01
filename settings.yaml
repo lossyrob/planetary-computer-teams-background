@@ -1,4 +1,7 @@
-image_name: pc-teams-background.png
+# Teams copied the selected background to this file name.
+# If you re-add the background in Teams and it creates a new GUID,
+# update image_name to the new file name in Backgrounds\Uploads.
+image_name: cbbc0bdd-ef3c-4f2c-a74b-c92291a87341.png
 
 # Leave blank to auto-detect the local Teams background folder.
 teams_image_folder:

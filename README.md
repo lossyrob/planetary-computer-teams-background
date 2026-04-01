@@ -4,6 +4,8 @@ This repository contains a script that rewrites a single custom Microsoft Teams 
 
 The script does **not** call a Teams API. It works by updating image files in Teams' local `Backgrounds\Uploads` folder, so you select the generated background once in Teams and later runs replace the image contents in place.
 
+If Teams copies your chosen background to a GUID-named file in `Backgrounds\Uploads`, point `settings.yaml:image_name` at that GUID file so future refreshes update the background Teams is actually using.
+
 ## Windows quick start
 
 Set it up as a managed background task:
@@ -102,6 +104,7 @@ When AOIs are enabled, the script will:
 - assign feature IDs if they are missing
 - store the last-used image timestamp in each feature's properties
 - avoid reusing an AOI too quickly based on `aois.refresh_days`
+- fall back to the AOI/item overlap when an AOI is much larger than a single Sentinel scene, which avoids mostly black backgrounds with a tiny image patch
 
 ## Windows background mode
 

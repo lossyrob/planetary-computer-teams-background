@@ -24,6 +24,7 @@ from shapely.geometry import box, mapping, shape
 
 AOI_LAST_ITEM_DT_KEY = "last_item_datetime"
 REQUEST_TIMEOUT_SECONDS = 30
+MIN_AOI_ITEM_COVERAGE_RATIO = 0.6
 
 
 class SettingsError(Exception):
@@ -377,6 +378,36 @@ class TeamsBackgroundGenerator:
 
         return mapping(box(xmin, ymin, xmax, ymax))
 
+    def get_render_geom(
+        self, item: pystac.Item, target_geom: Dict[str, Any], is_aoi: bool
+    ) -> Dict[str, Any]:
+        if not is_aoi or not item.geometry:
+            return target_geom
+
+        aoi_shape = shape(target_geom)
+        item_shape = shape(item.geometry)
+        intersection = aoi_shape.intersection(item_shape)
+        if intersection.is_empty:
+            print(
+                "AOI does not overlap the selected item footprint. "
+                "Using the item footprint instead."
+            )
+            return item.geometry
+
+        if aoi_shape.area == 0:
+            return mapping(intersection)
+
+        coverage_ratio = intersection.area / aoi_shape.area
+        if coverage_ratio >= MIN_AOI_ITEM_COVERAGE_RATIO:
+            return target_geom
+
+        print(
+            "AOI is much larger than the selected item coverage "
+            f"({coverage_ratio:.1%} of the AOI). "
+            "Using the AOI/item overlap to avoid a mostly black background."
+        )
+        return mapping(intersection)
+
     def get_render_params(
         self, collection_id: str, render_options_name: Optional[str] = None
     ) -> Dict[str, Union[str, List[str]]]:
@@ -552,7 +583,8 @@ class TeamsBackgroundGenerator:
         render_options = collection_config.rendering_option
 
         print("Generating background image...")
-        bg_geom = self.get_bg_geom(target_geom)
+        render_geom = self.get_render_geom(target_item, target_geom, is_aoi)
+        bg_geom = self.get_bg_geom(render_geom)
         render_params = self.get_render_params(collection_id, render_options)
         cql = self.get_base_cql(collection_id, collection_config.filters)
         image = self.fetch_image(target_item, bg_geom, render_params)
