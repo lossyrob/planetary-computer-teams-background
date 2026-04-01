@@ -1,0 +1,30 @@
+image_name: pc-teams-background.png
+
+# Leave blank to auto-detect the local Teams background folder.
+teams_image_folder:
+
+aois:
+  feature_collection_path: aois.geojson
+  refresh_days: 1
+
+collections:
+  - id: sentinel-2-l2a
+    rendering_option: Natural color
+    search_days: 30
+    filters:
+      - property: eo:cloud_cover
+        op: <=
+        value: 10
+
+width: 1040
+height: 780
+thumbnail_width: 200
+thumbnail_height: 150
+
+apis:
+  stac: https://planetarycomputer.microsoft.com/api/stac/v1/
+  info: https://planetarycomputer.microsoft.com/api/data/v1/mosaic/info
+  item_crop: https://planetarycomputer.microsoft.com/api/data/v1/item/crop
+
+max_search_results: 1000
+force_regen_after: 1 day

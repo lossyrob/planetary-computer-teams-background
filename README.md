@@ -12,7 +12,6 @@ Set it up as a managed background task:
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
-Copy-Item settings.template.yaml settings.yaml
 .\scripts\install-windows-task.ps1 -PythonExe .\.venv\Scripts\python.exe -SettingsFile .\settings.yaml -StartNow
 ```
 
@@ -51,7 +50,7 @@ python -m venv .venv
 python -m pip install -r requirements.txt
 ```
 
-Copy `settings.template.yaml` to `settings.yaml` and edit any settings you want to override.
+Review and edit `settings.yaml` as needed for your machine. `settings.template.yaml` remains a reference copy.
 
 ## Running
 
