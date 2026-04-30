@@ -10,6 +10,22 @@ aois:
   feature_collection_path: aois.geojson
   refresh_days: 1
 
+ai_suggestions:
+  enabled: true
+  model: claude-sonnet-4
+  timeout_seconds: 120
+  fallback_to_aois: true
+  verify_images: true
+  salvage_images: true
+  max_adjust_rounds: 2
+  max_suggestions_tried: 5
+  max_templates: 8
+  max_items_per_template: 2
+  max_preview_candidates: 12
+  preview_width: 320
+  preview_height: 240
+  history_limit: 10
+
 collections:
   - id: sentinel-2-l2a
     rendering_option: Natural color
@@ -23,6 +39,8 @@ width: 1040
 height: 780
 thumbnail_width: 200
 thumbnail_height: 150
+min_land_fraction: 0.3
+min_crop_fit_scale_ratio: 0.4
 
 apis:
   stac: https://planetarycomputer.microsoft.com/api/stac/v1/

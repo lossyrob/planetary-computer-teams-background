@@ -26,6 +26,28 @@ teams_image_folder:
 #   # the background until this many days have passed.
 #   refresh_days: 1
 
+# AI-curated suggestions for interesting satellite imagery.
+# When enabled, asks an LLM (via the Copilot SDK) to suggest
+# timely, visually interesting locations before falling back
+# to AOIs or random items.
+# Requires Node.js and `npm install` in the project root.
+#
+# ai_suggestions:
+#   enabled: true
+#   model: claude-sonnet-4   # Model to use (must support vision attachments)
+#   timeout_seconds: 120     # Max time per LLM call; dynamic discovery may need more than selection/verify
+#   fallback_to_aois: true   # Fall back to AOIs if no AI candidate passes
+#   verify_images: true      # Verify the final full-size render with vision
+#   salvage_images: true     # Keep a strong image but rewrite the story if needed
+#   max_adjust_rounds: 2     # Max crop/zoom retries for the selected candidate
+#   max_suggestions_tried: 5 # Max AI-selected finalists before AOI fallback
+#   max_templates: 8         # Max dynamically discovered phenomena to scan per run
+#   max_items_per_template: 2
+#   max_preview_candidates: 12
+#   preview_width: 320       # Preview tile width in the candidate contact sheet
+#   preview_height: 240
+#   history_limit: 10        # Recent accept/reject notes fed back to the selector
+
 # Collections to search items for.
 collections:
 - id: sentinel-2-l2a
@@ -50,6 +72,14 @@ width: 1040
 height: 780
 thumbnail_width: 200
 thumbnail_height: 150
+
+# Require at least this much of the final crop to intersect
+# Natural Earth land polygons. Set to 0 to disable the filter.
+min_land_fraction: 0.3
+
+# Reject crops that have to shrink too much relative to the requested frame.
+# 0 disables the guard; 0.4 means keep at least 40% of the requested width/height.
+min_crop_fit_scale_ratio: 0.4
 
 # Provide this to customize where the JSON info about the image
 # is saved. Defaults to the same directory as the image,

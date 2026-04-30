@@ -14,6 +14,7 @@ Set it up as a managed background task:
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
+npm install
 .\scripts\install-windows-task.ps1 -PythonExe .\.venv\Scripts\python.exe -SettingsFile .\settings.yaml -StartNow
 ```
 
@@ -36,11 +37,26 @@ Remove it with:
 .\scripts\uninstall-windows-task.ps1
 ```
 
+## Copilot CLI skill
+
+This repo includes a local skill at `.github\skills\planetary-background-ops`.
+
+```text
+copilot
+/skills reload
+/skills list
+Use /planetary-background-ops to regenerate the current Teams background.
+Use /planetary-background-ops to explain where the current Teams background image is from.
+```
+
+The skill uses `scripts\describe_background_image.py` and bases its location answer on the actual rendered crop stored in the current `*-info.json`, not just the AOI or full Sentinel item footprint.
+
 ## Requirements
 
 - Python 3.10+
 - Windows desktop Teams (new or classic)
 - Optional: a GeoJSON FeatureCollection of AOIs
+- Node.js if you want the AI-curated search-first workflow
 
 ## Setup
 
@@ -52,9 +68,14 @@ Create and activate a virtual environment, then install the dependencies.
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
+npm install
 ```
 
 Review and edit `settings.yaml` as needed for your machine. `settings.template.yaml` remains a reference copy.
+
+If `min_land_fraction` is greater than `0`, the generator downloads Natural Earth land polygons into `.cache\natural-earth` on first use and only accepts final crops whose land coverage meets that threshold.
+
+If `min_crop_fit_scale_ratio` is greater than `0`, the generator rejects crops that would need to shrink too aggressively relative to the requested frame. This helps avoid backgrounds that feel overly zoomed-in because only a tiny fraction of the intended crop could fit inside the item footprint.
 
 ## Running
 
@@ -68,6 +89,12 @@ Useful flags:
 - `-d`, `--debug`: raise the full exception instead of printing a short error
 - `--settings-file`: point at a different settings YAML file
 
+To describe the current rendered image and where it is from:
+
+```powershell
+.\.venv\Scripts\python.exe .\scripts\describe_background_image.py --settings-file .\settings.yaml
+```
+
 The script generates a new background when any of these are true:
 
 - the configured background file does not exist
@@ -78,10 +105,35 @@ The script generates a new background when any of these are true:
 When a new image is needed, the script:
 
 1. Searches recent Sentinel-2 items from the configured collections.
-2. Prefers new items intersecting configured AOIs.
-3. Falls back to a random recent item if no AOI match is available.
-4. Crops the selected item to the configured background aspect ratio.
-5. Writes the background image, a Teams thumbnail, and an info JSON file.
+2. If `ai_suggestions.enabled` is true, first asks the model to **dynamically discover** timely phenomena from live context and recent imagery availability, then builds a pool of real current candidates from those discoveries, recent STAC items, and multiple crop scales.
+3. Renders a preview contact sheet and asks the model to **choose from actual imagery** instead of inventing a story first.
+4. Verifies the final full-size render with vision. The model can accept it, ask for a crop adjustment, salvage it by rewriting the caption, or skip it.
+5. Prefers new items intersecting configured AOIs when the AI pool does not yield a winner.
+6. Falls back to a random recent item if no AOI match is available.
+7. Crops the selected item to the configured background aspect ratio.
+8. If `min_land_fraction` is set, rejects crops and even whole items that cannot reach that land-coverage threshold using Natural Earth land polygons.
+9. If `min_crop_fit_scale_ratio` is set, rejects crops that would retain too little of the requested frame after fitting.
+10. Writes the background image, a Teams thumbnail, and an info JSON file.
+
+## AI-curated search-first workflow
+
+When `ai_suggestions.enabled` is on, the generator now uses a search-first pipeline:
+
+1. **Dynamic discovery**: the model uses live context tools at runtime (current date/season, NASA EONET events, NASA Earth Observatory stories, geocoding, and recent STAC availability probes) to propose a fresh ranked set of phenomena for the current run.
+2. **Availability scan**: searches multiple recent items per discovered phenomenon using the current collection filters plus per-phenomenon cloud limits.
+3. **Preview sheet selection**: renders small previews at multiple scales and lets the model pick from the imagery that actually exists right now.
+4. **Final verification**: sends the chosen final render back through vision. The model can:
+   - accept it,
+   - adjust zoom/center/land mix and retry,
+   - salvage it by rewriting the story to match the image,
+   - or reject it and try another candidate.
+5. **Learning loop**: the gallery stores recent accept/reject assessments and feeds them back into both discovery and selection so the model gradually avoids brittle ideas.
+
+The runtime artifacts live under `gallery\`:
+
+- `gallery\index.html` — local gallery browser
+- `gallery\manifest.json` — archived image metadata
+- `gallery\ai-selection-history.json` — recent selection/verification history used to steer future runs
 
 ## Teams background folder
 

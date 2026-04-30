@@ -1,3 +1,6 @@
 __pycache__/
 logs/
 .venv/
+.cache/
+node_modules/
+gallery/

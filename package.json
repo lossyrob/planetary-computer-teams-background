@@ -1,0 +1,9 @@
+{
+  "private": true,
+  "name": "planetary-computer-teams-background",
+  "description": "AI suggestion helpers for satellite background selection",
+  "type": "module",
+  "dependencies": {
+    "@github/copilot-sdk": "latest"
+  }
+}
