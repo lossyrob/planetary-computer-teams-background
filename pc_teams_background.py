@@ -272,7 +272,7 @@ class AOIsConfig(BaseModel):
 
 class AiSuggestionsConfig(BaseModel):
     enabled: bool = False
-    model: str = "claude-sonnet-4"
+    model: str = "claude-sonnet-4.5"
     timeout_seconds: int = 120
     fallback_to_aois: bool = True
     verify_images: bool = True

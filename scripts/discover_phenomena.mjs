@@ -3,6 +3,7 @@
 // timely, imageable phenomenon candidates at runtime.
 
 import { CopilotClient, defineTool } from "@github/copilot-sdk";
+import { resolveSdkHome } from "./copilot_sdk_home.mjs";
 import { parseArgs } from "node:util";
 import { readFileSync } from "node:fs";
 
@@ -149,7 +150,7 @@ async function main() {
   const { values } = parseArgs({
     options: {
       stdin: { type: "boolean", default: false },
-      model: { type: "string", default: "claude-sonnet-4" },
+      model: { type: "string", default: "claude-sonnet-4.5" },
       timeout: { type: "string", default: "120000" },
     },
   });
@@ -410,7 +411,7 @@ Respond with ONLY valid JSON in this shape:
 
   let client;
   try {
-    client = new CopilotClient();
+    client = new CopilotClient({ baseDirectory: resolveSdkHome() });
     await client.start();
   } catch (err) {
     process.stderr.write(`Failed to initialize Copilot client: ${err.message}\n`);

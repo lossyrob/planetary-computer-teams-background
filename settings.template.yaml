@@ -34,7 +34,7 @@ teams_image_folder:
 #
 # ai_suggestions:
 #   enabled: true
-#   model: claude-sonnet-4   # Model to use (must support vision attachments)
+#   model: claude-sonnet-4.5 # Model to use (must support vision attachments)
 #   timeout_seconds: 120     # Max time per LLM call; dynamic discovery may need more than selection/verify
 #   fallback_to_aois: true   # Fall back to AOIs if no AI candidate passes
 #   verify_images: true      # Verify the final full-size render with vision

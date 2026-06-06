@@ -4,6 +4,6 @@
   "description": "AI suggestion helpers for satellite background selection",
   "type": "module",
   "dependencies": {
-    "@github/copilot-sdk": "latest"
+    "@github/copilot-sdk": "^1.0.0"
   }
 }

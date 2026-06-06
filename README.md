@@ -135,6 +135,18 @@ The runtime artifacts live under `gallery\`:
 - `gallery\manifest.json` — archived image metadata
 - `gallery\ai-selection-history.json` — recent selection/verification history used to steer future runs
 
+### Copilot SDK session storage
+
+The AI helper scripts (`scripts\discover_phenomena.mjs`, `suggest_location.mjs`, `verify_image.mjs`) drive the Copilot SDK, which persists per-session state and an aggregate `session-store.db`. By default the SDK runtime writes these under `~\.copilot`, which can show up in tools that watch that directory.
+
+To keep these automated background runs out of the default store, the scripts point the SDK at a repo-local `COPILOT_HOME` via the `baseDirectory` option (see `scripts\copilot_sdk_home.mjs`). State is written to:
+
+```text
+<repo>\.cache\copilot-sdk-home
+```
+
+which is git-ignored. Override the location by setting `PC_TEAMS_COPILOT_HOME` (absolute, or relative to the repo root) before the run. Authentication still uses your logged-in Copilot/`gh` credentials and is unaffected by this redirect.
+
 ## Teams background folder
 
 If `teams_image_folder` is left blank, the script auto-detects the first existing folder from:
